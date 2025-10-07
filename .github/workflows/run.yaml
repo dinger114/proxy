@@ -10,13 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - name: Set up time
+        run: |
+          echo "CURRENT_TIME=$(date -u '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
+
       - name: Download opera-proxy
         run: |
-          DOWNLOAD_URL=$(curl -s https://api.github.com/repos/Snawoot/opera-proxy/releases/latest | grep ".*linux_amd64" | cut -d '"' -f 4)
-          curl -L $DOWNLOAD_URL -o opera-proxy
+          wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
           chmod +x opera-proxy
-      
-      - name: Generate proxy list and convert to Clash format
+
+      - name: Generate proxy list
         id: proxy-gen
         run: |
           # 运行命令并捕获输出
@@ -28,25 +31,23 @@ jobs:
           
           # 创建 Clash 配置文件
           echo "proxies:" > clash_config.yml
-          
-          # 处理每个代理服务器
           echo "$OUTPUT" | grep -E "^[^,]+,[^,]+,[^,]+$" | while IFS=, read -r host ip port; do
             # 获取域名的前三个字母
             NAME_PREFIX=$(echo $host | cut -c1-3)
-            
-            # 添加代理配置
-            cat >> clash_config.yml << EOF
-          - name: ${NAME_PREFIX}
-            type: http
-            server: ${host}
-            port: ${port}
-            username: ${PROXY_LOGIN}
-            password: ${PROXY_PASS}
-            tls: true
-            skip-cert-verify: false
-            sni: ${host}
-          EOF
+            echo "- name: ${NAME_PREFIX}" >> clash_config.yml
+            echo "  type: http" >> clash_config.yml
+            echo "  server: ${host}" >> clash_config.yml
+            echo "  port: ${port}" >> clash_config.yml
+            echo "  username: ${PROXY_LOGIN}" >> clash_config.yml
+            echo "  password: ${PROXY_PASS}" >> clash_config.yml
+            echo "  tls: true" >> clash_config.yml
+            echo "  skip-cert-verify: false" >> clash_config.yml
+            echo "  sni: ${host}" >> clash_config.yml
+            echo "" >> clash_config.yml
           done
+          
+          # 添加更新时间到文件
+          sed -i "1i# Update time: ${{ env.CURRENT_TIME }}" clash_config.yml
 
       - name: Create Release
         id: create_release
@@ -55,7 +56,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tag_name: proxy-${{ github.run_number }}
-          release_name: Proxy Config ${{ github.run_number }}
+          release_name: Proxy Config ${{ env.CURRENT_TIME }}
+          body: |
+            Proxy configuration updated at ${{ env.CURRENT_TIME }}
           draft: false
           prerelease: false
 
