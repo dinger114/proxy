@@ -35,7 +35,7 @@ class ProxyConfigGenerator:
             print(f"下载 opera-proxy 失败: {e}")
             raise
 
-    def generate_proxy_configs(self) -> Dict[str, List[str]]:
+    def generate_proxy_configs(self) -> Dict[str, str]:
         """为每个区域生成代理配置"""
         print("生成代理配置...")
         regions = ['EU', 'AS', 'AM']
@@ -45,12 +45,15 @@ class ProxyConfigGenerator:
             output_file = f"{region}_proxy_output.txt"
             try:
                 with open(output_file, 'w') as f:
-                    subprocess.run([
+                    result = subprocess.run([
                         './opera-proxy', '-country', region, '-list-proxies'
-                    ], stdout=f, check=True)
+                    ], stdout=f, stderr=subprocess.PIPE, text=True)
                 
-                region_files[region] = output_file
-                print(f"{region} 区域配置生成完成")
+                if result.returncode == 0:
+                    region_files[region] = output_file
+                    print(f"{region} 区域配置生成完成")
+                else:
+                    print(f"生成 {region} 区域配置失败: {result.stderr}")
                 
             except subprocess.CalledProcessError as e:
                 print(f"生成 {region} 区域配置失败: {e}")
@@ -58,7 +61,7 @@ class ProxyConfigGenerator:
                 
         return region_files
 
-    def parse_proxy_credentials(self, region_files: Dict[str, List[str]]) -> Tuple[str, str]:
+    def parse_proxy_credentials(self, region_files: Dict[str, str]) -> Tuple[str, str]:
         """从区域文件中解析代理凭据"""
         print("解析代理凭据...")
         login = ""
@@ -94,44 +97,76 @@ class ProxyConfigGenerator:
         
         try:
             with open(filename, 'r', encoding='utf-8') as f:
-                for line in f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
+                    # 跳过空行和注释行
+                    if not line or line.startswith('#'):
+                        continue
+                    
                     # 匹配 host,ip,port 格式
                     if re.match(r'^[^,]+,[^,]+,[^,]+$', line):
                         parts = line.split(',')
                         if len(parts) == 3:
-                            host, ip, port = parts
-                            servers.append({
-                                'host': host.strip(),
-                                'ip': ip.strip(),
-                                'port': port.strip()
-                            })
+                            host, ip, port = [part.strip() for part in parts]
+                            
+                            # 验证端口号
+                            try:
+                                port_int = int(port)
+                                if 1 <= port_int <= 65535:
+                                    servers.append({
+                                        'host': host,
+                                        'ip': ip,
+                                        'port': port_int
+                                    })
+                                else:
+                                    print(f"警告: 文件 {filename} 第 {line_num} 行端口号超出范围: {port}")
+                            except ValueError:
+                                print(f"警告: 文件 {filename} 第 {line_num} 行无效的端口号: {port}")
+                    else:
+                        print(f"调试: 跳过不匹配的行 {line_num}: {line}")
+                        
         except Exception as e:
             print(f"解析服务器文件 {filename} 失败: {e}")
             
+        print(f"从 {filename} 解析到 {len(servers)} 个有效服务器")
         return servers
 
-    def generate_clash_config(self, region_files: Dict[str, List[str]], login: str, password: str):
+    def debug_file_content(self, filename: str):
+        """调试文件内容"""
+        print(f"\n=== 调试文件 {filename} ===")
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                content = f.read()
+                print(f"文件内容:\n{content}")
+                print("=== 文件内容结束 ===\n")
+        except Exception as e:
+            print(f"读取调试文件失败: {e}")
+
+    def generate_clash_config(self, region_files: Dict[str, str], login: str, password: str):
         """生成 Clash 配置文件"""
         print("生成 Clash 配置...")
         
         clash_config = {'proxies': []}
+        total_servers = 0
         
         for region, filename in region_files.items():
+            # 调试：先查看文件内容
+            self.debug_file_content(filename)
+            
             country_cn = self.region_map.get(region, region)
             servers = self.parse_proxy_servers(filename)
             
             print(f"处理 {region} 区域，找到 {len(servers)} 个服务器")
             
             for server in servers:
-                prefix = server['host'][:3]
+                prefix = server['host'][:3] if len(server['host']) >= 3 else server['host']
                 proxy_name = f"{country_cn}-{prefix}"
                 
                 proxy_config = {
                     'name': proxy_name,
                     'type': 'http',
                     'server': server['ip'],
-                    'port': int(server['port']),
+                    'port': server['port'],  # 这里已经是整数
                     'username': login,
                     'password': password,
                     'tls': True,
@@ -140,14 +175,15 @@ class ProxyConfigGenerator:
                 }
                 
                 clash_config['proxies'].append(proxy_config)
+                total_servers += 1
         
         # 写入 YAML 文件
         with open('clash-config.yml', 'w', encoding='utf-8') as f:
             yaml.dump(clash_config, f, allow_unicode=True, default_flow_style=False, indent=2)
             
-        print(f"Clash 配置生成完成，共 {len(clash_config['proxies'])} 个代理")
+        print(f"Clash 配置生成完成，共 {total_servers} 个代理")
 
-    def cleanup(self, region_files: Dict[str, List[str]]):
+    def cleanup(self, region_files: Dict[str, str]):
         """清理临时文件"""
         print("清理临时文件...")
         
@@ -184,6 +220,9 @@ class ProxyConfigGenerator:
             
             if not login or not password:
                 print("警告: 未找到完整的代理凭据")
+                # 设置默认值避免后续错误
+                login = login or "default_user"
+                password = password or "default_pass"
             
             # 步骤4: 生成 Clash 配置
             self.generate_clash_config(region_files, login, password)
@@ -196,6 +235,8 @@ class ProxyConfigGenerator:
             
         except Exception as e:
             print(f"生成配置过程中发生错误: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
 if __name__ == "__main__":
