@@ -1,28 +1,26 @@
-name: Opera Proxy to Clash Config
+name: Generate Opera Proxy Clash Config
 
 on:
   workflow_dispatch:
   schedule:
     - cron: '0 */12 * * *'  # 每12小时运行一次
 
-permissions:
-  contents: write  # 添加创建 release 的权限
-
 jobs:
-  generate-config:
+  generate-proxy:
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
+    
     steps:
-      - name: Get current time
-        id: current-time
-        run: echo "time=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_OUTPUT
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Download opera-proxy
         run: |
           wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
           chmod +x opera-proxy
 
-      - name: Generate proxy list
+      - name: Generate proxy list and create Clash config
         id: proxy-gen
         run: |
           # 运行命令并捕获输出
@@ -32,7 +30,7 @@ jobs:
           PROXY_LOGIN=$(echo "$OUTPUT" | grep "Proxy login:" | cut -d ' ' -f 3)
           PROXY_PASS=$(echo "$OUTPUT" | grep "Proxy password:" | cut -d ' ' -f 3)
           
-          # 创建 clash 配置文件
+          # 创建 Clash 配置文件
           echo "proxies:" > clash-config.yml
           
           # 处理每个代理服务器
@@ -41,25 +39,29 @@ jobs:
             NAME_PREFIX=$(echo $host | cut -c1-3)
             
             # 添加代理配置
-            echo "- name: ${NAME_PREFIX}" >> clash-config.yml
-            echo "  type: http" >> clash-config.yml
-            echo "  server: ${host}" >> clash-config.yml
-            echo "  port: ${port}" >> clash-config.yml
-            echo "  username: ${PROXY_LOGIN}" >> clash-config.yml
-            echo "  password: ${PROXY_PASS}" >> clash-config.yml
-            echo "  tls: true" >> clash-config.yml
-            echo "  skip-cert-verify: false" >> clash-config.yml
-            echo "  sni: ${host}" >> clash-config.yml
-            echo "" >> clash-config.yml
+            cat >> clash-config.yml << EOF
+          - name: ${NAME_PREFIX}
+            type: http
+            server: ${host}
+            port: ${port}
+            username: ${PROXY_LOGIN}
+            password: ${PROXY_PASS}
+            tls: true
+            skip-cert-verify: false
+            sni: ${host}
+          EOF
           done
 
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@v1
-        with:
-          files: clash-config.yml
-          name: "Proxy Config ${{ steps.current-time.outputs.time }}"
-          tag_name: "proxy-${{ steps.current-time.outputs.time }}"
-          body: "Proxy configuration updated at ${{ steps.current-time.outputs.time }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: "Proxy Config ${{ github.run_number }}"
+          tag_name: "proxy-${{ github.run_number }}"
+          files: clash-config.yml
+          draft: false
+          prerelease: false
+          body: |
+            Proxy configuration updated at ${{ github.event.repository.updated_at }}
