@@ -18,80 +18,19 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
 
-      - name: Set up environment
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
         run: |
-          echo "TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+          python -m pip install --upgrade pip
+          pip install PyYAML
 
-      - name: Download opera-proxy
+      - name: Generate proxy configurations
         run: |
-          wget -q https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
-          chmod +x opera-proxy
-
-      - name: Generate proxy configurations (EU / AS / AM)
-        run: |
-          set -o pipefail
-          rm -f proxy_output.txt EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt
-          # Generate per-region outputs
-          for region in EU AS AM; do
-            ./opera-proxy -country "$region" -list-proxies > "${region}_proxy_output.txt" || true
-          done
-
-      - name: Convert to Clash format and merge
-        run: |
-          # try to get login/password from any region file
-          PROXY_LOGIN=""
-          PROXY_PASS=""
-          for f in EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt; do
-            if [ -f "$f" ]; then
-              if [ -z "$PROXY_LOGIN" ]; then
-                PROXY_LOGIN=$(grep -m1 "Proxy login:" "$f" | awk '{print $3}' || true)
-              fi
-              if [ -z "$PROXY_PASS" ]; then
-                PROXY_PASS=$(grep -m1 "Proxy password:" "$f" | awk '{print $3}' || true)
-              fi
-            fi
-          done
-
-          echo "proxies:" > clash-config.yml
-
-          for region in EU AS AM; do
-            infile="${region}_proxy_output.txt"
-            [ -f "$infile" ] || continue
-
-            case "$region" in
-              AM) COUNTRY_CN="美国" ;;
-              AS) COUNTRY_CN="新加坡" ;;
-              EU) COUNTRY_CN="挪威" ;;
-              *) COUNTRY_CN="$region" ;;
-            esach
-
-            # 使用更安全的方式处理输入
-            grep -E "^[^,]+,[^,]+,[^,]+$" "$infile" | while IFS=, read -r host ip port || [ -n "$host" ]; do
-              # 清理变量中的特殊字符
-              host_clean=$(echo "$host" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
-              ip_clean=$(echo "$ip" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
-              port_clean=$(echo "$port" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
-              
-              PREFIX=$(echo "$host_clean" | cut -c1-3)
-              
-              # 直接追加到主文件
-              cat >> clash-config.yml << EOF
-- name: ${COUNTRY_CN}-${PREFIX}
-  type: http
-  server: ${ip_clean}
-  port: ${port_clean}
-  username: ${PROXY_LOGIN}
-  password: ${PROXY_PASS}
-  tls: true
-  skip-cert-verify: false
-  sni: ${host_clean}
-
-EOF
-            done
-          done
-
-          # 清理
-          rm -f EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt 2>/dev/null || true
+          python generate_proxy_config.py
 
       - name: Configure Git
         run: |
@@ -101,5 +40,5 @@ EOF
       - name: Commit and push clash-config.yml
         run: |
           git add clash-config.yml
-          git commit -m "Update proxy configuration ${TIMESTAMP}" || echo "No changes to commit"
+          git commit -m "Update proxy configuration $(date -u +'%Y-%m-%d_%H-%M-%S')" || echo "No changes to commit"
           git push
