@@ -3,7 +3,7 @@ name: Generate Opera Proxy Config
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # 每天 UTC 时间 00:00 运行
+    - cron: '0 */12 * * *'  # 每12小时运行一次
 
 jobs:
   generate-config:
@@ -14,52 +14,66 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up environment
+        run: |
+          echo "TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
 
       - name: Download opera-proxy
         run: |
-          wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
-          chmod +x opera-proxy
+          wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64
+          chmod +x opera-proxy.linux-amd64
 
-      - name: Generate proxy list
-        id: proxy-gen
+      - name: Generate proxy configurations
         run: |
-          # 运行命令并捕获输出
-          OUTPUT=$(./opera-proxy -country EU -list-proxies)
-          
-          # 解析输出
-          PROXY_LOGIN=$(echo "$OUTPUT" | grep "Proxy login:" | cut -d ' ' -f 3)
-          PROXY_PASS=$(echo "$OUTPUT" | grep "Proxy password:" | cut -d ' ' -f 3)
-          
-          # 创建 clash 配置文件
-          echo "proxies:" > clash-config.yml
-          
-          # 处理每个代理服务器
-          echo "$OUTPUT" | grep -E "^[^,]+,[^,]+,[^,]+$" | while IFS=, read -r host ip port; do
-            # 获取域名的前三个字母
-            PREFIX=$(echo "$host" | cut -c1-3)
+          # 为每个地区生成配置
+          for region in "EU" "AS" "AM"; do
+            # 生成代理信息并保存到临时文件
+            ./opera-proxy.linux-amd64 -country $region -list-proxies > "${region}_proxy_output.txt"
             
-            # 添加代理配置
-            echo "- name: $PREFIX" >> clash-config.yml
-            echo "  type: http" >> clash-config.yml
-            echo "  server: $ip" >> clash-config.yml
-            echo "  port: 443" >> clash-config.yml
-            echo "  username: $PROXY_LOGIN" >> clash-config.yml
-            echo "  password: $PROXY_PASS" >> clash-config.yml
-            echo "  tls: true" >> clash-config.yml
-            echo "  skip-cert-verify: false" >> clash-config.yml
-            echo "  sni: $host" >> clash-config.yml
-            echo "" >> clash-config.yml
+            # 解析输出并创建 clash 配置
+            PROXY_LOGIN=$(grep "Proxy login:" "${region}_proxy_output.txt" | cut -d ' ' -f 3)
+            PROXY_PASSWORD=$(grep "Proxy password:" "${region}_proxy_output.txt" | cut -d ' ' -f 3)
+            
+            # 创建对应地区的 clash 配置文件
+            echo "proxies:" > "${region}_clash-config.yml"
+            
+            # 根据地区设置国家名称
+            case $region in
+              "AM") COUNTRY="美国" ;;
+              "AS") COUNTRY="新加坡" ;;
+              "EU") COUNTRY="挪威" ;;
+            esac
+            
+            # 处理每个代理服务器
+            grep -E "^[^,]+,[^,]+,[^,]+$" "${region}_proxy_output.txt" | while IFS=, read -r host ip port; do
+              # 获取域名的前三个字母
+              PREFIX=$(echo $host | cut -c1-3)
+              
+              cat >> "${region}_clash-config.yml" << EOF
+- name: ${COUNTRY}-${PREFIX}
+  type: http
+  server: ${ip}
+  port: ${port}
+  username: ${PROXY_LOGIN}
+  password: ${PROXY_PASSWORD}
+  tls: true
+  skip-cert-verify: false
+  sni: ${host}
+EOF
+            done
           done
-
-      - name: Configure Git
-        run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
-          git config --local user.name "github-actions[bot]"
+          
+          # 合并所有配置文件
+          echo "proxies:" > clash-config.yml
+          for region in "EU" "AS" "AM"; do
+            tail -n +2 "${region}_clash-config.yml" >> clash-config.yml
+          done
 
       - name: Commit and push changes
         run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add clash-config.yml
-          git commit -m "Update proxy configuration $(date +'%Y-%m-%d_%H-%M-%S')" || echo "No changes to commit"
+          git commit -m "Update proxy configuration ${TIMESTAMP}"
           git push
