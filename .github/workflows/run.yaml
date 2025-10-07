@@ -1,4 +1,4 @@
-name: Generate Opera Proxy Config
+name: Opera Proxy to Clash Config
 
 on:
   workflow_dispatch:
@@ -6,36 +6,40 @@ on:
     - cron: '0 */12 * * *'  # 每12小时运行一次
 
 jobs:
-  generate-proxy:
+  generate-config:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Download opera-proxy
         run: |
           wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
           chmod +x opera-proxy
 
-      - name: Generate proxy list
+      - name: Generate proxy list and convert to Clash format
         run: |
-          # 运行命令并捕获输出
+          # 运行 opera-proxy 并获取输出
           OUTPUT=$(./opera-proxy -country EU -list-proxies)
           
-          # 解析输出
+          # 创建 clash 配置文件
+          echo "proxies:" > clash-config.yml
+          
+          # 解析输出并转换为 clash 格式
           PROXY_LOGIN=$(echo "$OUTPUT" | grep "Proxy login:" | cut -d ' ' -f 3)
           PROXY_PASS=$(echo "$OUTPUT" | grep "Proxy password:" | cut -d ' ' -f 3)
           
-          # 创建clash配置文件
-          echo "proxies:" > clash-config.yml
-          
-          # 处理每个代理服务器
           echo "$OUTPUT" | grep -E "^[^,]+,[^,]+,[^,]+$" | while IFS=, read -r host ip port; do
-            # 获取域名的前三个字母
+            # 获取域名前三个字母
             NAME_PREFIX=$(echo $host | cut -c1-3)
             
-            # 添加代理配置
+            # 写入 clash 格式的配置
             echo "- name: ${NAME_PREFIX}" >> clash-config.yml
             echo "  type: http" >> clash-config.yml
             echo "  server: ${host}" >> clash-config.yml
@@ -50,8 +54,8 @@ jobs:
 
       - name: Commit and push changes
         run: |
-          git config --global user.name 'GitHub Actions Bot'
-          git config --global user.email 'actions@github.com'
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add clash-config.yml
-          git commit -m "Update proxy configuration $(date +%Y-%m-%d_%H-%M-%S)"
+          git commit -m "Update proxy configuration $(date +'%Y-%m-%d_%H-%M-%S')" || exit 0
           git push
