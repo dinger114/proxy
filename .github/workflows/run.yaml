@@ -63,35 +63,35 @@ jobs:
               AS) COUNTRY_CN="新加坡" ;;
               EU) COUNTRY_CN="挪威" ;;
               *) COUNTRY_CN="$region" ;;
-            esac
+            esach
 
-            # create a temporary region file with entries (no top-level "proxies:" header)
-            tmp="${region}_clash_entries.tmp"
-            rm -f "$tmp"
-            grep -E "^[^,]+,[^,]+,[^,]+$" "$infile" | while IFS=, read -r host ip port; do
-              PREFIX=$(echo "$host" | cut -c1-3)
-              cat >> "$tmp" <<EOF
+            # 使用更安全的方式处理输入
+            grep -E "^[^,]+,[^,]+,[^,]+$" "$infile" | while IFS=, read -r host ip port || [ -n "$host" ]; do
+              # 清理变量中的特殊字符
+              host_clean=$(echo "$host" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
+              ip_clean=$(echo "$ip" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
+              port_clean=$(echo "$port" | tr -d '\r\n' | sed 's/[[:space:]]*$//')
+              
+              PREFIX=$(echo "$host_clean" | cut -c1-3)
+              
+              # 直接追加到主文件
+              cat >> clash-config.yml << EOF
 - name: ${COUNTRY_CN}-${PREFIX}
   type: http
-  server: ${ip}
-  port: ${port}
+  server: ${ip_clean}
+  port: ${port_clean}
   username: ${PROXY_LOGIN}
   password: ${PROXY_PASS}
   tls: true
   skip-cert-verify: false
-  sni: ${host}
+  sni: ${host_clean}
 
 EOF
             done
-
-            # append entries to final file if tmp exists and not empty
-            if [ -f "$tmp" ] && [ -s "$tmp" ]; then
-              tail -n +1 "$tmp" >> clash-config.yml
-            fi
           done
 
-          # cleanup temp files (optional)
-          rm -f EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt *.tmp || true
+          # 清理
+          rm -f EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt 2>/dev/null || true
 
       - name: Configure Git
         run: |
