@@ -10,10 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up environment
         run: |
@@ -21,59 +24,82 @@ jobs:
 
       - name: Download opera-proxy
         run: |
-          wget https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64
-          chmod +x opera-proxy.linux-amd64
+          wget -q https://github.com/Snawoot/opera-proxy/releases/download/v1.11.2/opera-proxy.linux-amd64 -O opera-proxy
+          chmod +x opera-proxy
 
-      - name: Generate proxy configurations
+      - name: Generate proxy configurations (EU / AS / AM)
         run: |
-          # 为每个地区生成配置
-          for region in "EU" "AS" "AM"; do
-            # 生成代理信息并保存到临时文件
-            ./opera-proxy.linux-amd64 -country $region -list-proxies > "${region}_proxy_output.txt"
-            
-            # 解析输出并创建 clash 配置
-            PROXY_LOGIN=$(grep "Proxy login:" "${region}_proxy_output.txt" | cut -d ' ' -f 3)
-            PROXY_PASSWORD=$(grep "Proxy password:" "${region}_proxy_output.txt" | cut -d ' ' -f 3)
-            
-            # 创建对应地区的 clash 配置文件
-            echo "proxies:" > "${region}_clash-config.yml"
-            
-            # 根据地区设置国家名称
-            case $region in
-              "AM") COUNTRY="美国" ;;
-              "AS") COUNTRY="新加坡" ;;
-              "EU") COUNTRY="挪威" ;;
+          set -o pipefail
+          rm -f proxy_output.txt EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt
+          # Generate per-region outputs
+          for region in EU AS AM; do
+            ./opera-proxy -country "$region" -list-proxies > "${region}_proxy_output.txt" || true
+          done
+
+      - name: Convert to Clash format and merge
+        run: |
+          # try to get login/password from any region file
+          PROXY_LOGIN=""
+          PROXY_PASS=""
+          for f in EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt; do
+            if [ -f "$f" ]; then
+              if [ -z "$PROXY_LOGIN" ]; then
+                PROXY_LOGIN=$(grep -m1 "Proxy login:" "$f" | awk '{print $3}' || true)
+              fi
+              if [ -z "$PROXY_PASS" ]; then
+                PROXY_PASS=$(grep -m1 "Proxy password:" "$f" | awk '{print $3}' || true)
+              fi
+            fi
+          done
+
+          echo "proxies:" > clash-config.yml
+
+          for region in EU AS AM; do
+            infile="${region}_proxy_output.txt"
+            [ -f "$infile" ] || continue
+
+            case "$region" in
+              AM) COUNTRY_CN="美国" ;;
+              AS) COUNTRY_CN="新加坡" ;;
+              EU) COUNTRY_CN="挪威" ;;
+              *) COUNTRY_CN="$region" ;;
             esac
-            
-            # 处理每个代理服务器
-            grep -E "^[^,]+,[^,]+,[^,]+$" "${region}_proxy_output.txt" | while IFS=, read -r host ip port; do
-              # 获取域名的前三个字母
-              PREFIX=$(echo $host | cut -c1-3)
-              
-              cat >> "${region}_clash-config.yml" << EOF
-- name: ${COUNTRY}-${PREFIX}
+
+            # create a temporary region file with entries (no top-level "proxies:" header)
+            tmp="${region}_clash_entries.tmp"
+            rm -f "$tmp"
+            grep -E "^[^,]+,[^,]+,[^,]+$" "$infile" | while IFS=, read -r host ip port; do
+              PREFIX=$(echo "$host" | cut -c1-3)
+              cat >> "$tmp" <<EOF
+- name: ${COUNTRY_CN}-${PREFIX}
   type: http
   server: ${ip}
   port: ${port}
   username: ${PROXY_LOGIN}
-  password: ${PROXY_PASSWORD}
+  password: ${PROXY_PASS}
   tls: true
   skip-cert-verify: false
   sni: ${host}
+
 EOF
             done
-          done
-          
-          # 合并所有配置文件
-          echo "proxies:" > clash-config.yml
-          for region in "EU" "AS" "AM"; do
-            tail -n +2 "${region}_clash-config.yml" >> clash-config.yml
+
+            # append entries to final file if tmp exists and not empty
+            if [ -f "$tmp" ] && [ -s "$tmp" ]; then
+              tail -n +1 "$tmp" >> clash-config.yml
+            fi
           done
 
-      - name: Commit and push changes
+          # cleanup temp files (optional)
+          rm -f EU_proxy_output.txt AS_proxy_output.txt AM_proxy_output.txt *.tmp || true
+
+      - name: Configure Git
         run: |
-          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+
+      - name: Commit and push clash-config.yml
+        run: |
           git add clash-config.yml
-          git commit -m "Update proxy configuration ${TIMESTAMP}"
+          git commit -m "Update proxy configuration ${TIMESTAMP}" || echo "No changes to commit"
           git push
