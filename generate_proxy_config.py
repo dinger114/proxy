@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Opera Proxy to Clash Config (Minimalist / Provider Version)
-"""
 
 import subprocess
 import os
@@ -18,7 +15,6 @@ class ProxyConfigGenerator:
 
         self.output_filename = 'clash-config.yml'
         
-
         self.version = "v1.11.2"
         self.arch = "linux-amd64" 
         self.binary_name = "opera-proxy"
@@ -57,7 +53,6 @@ class ProxyConfigGenerator:
         return files
 
     def parse_data(self, files: Dict[str, str]) -> Tuple[str, str, List[Dict]]:
-        """解析数据"""
         login, password = "", ""
         servers = []
         
@@ -96,18 +91,25 @@ class ProxyConfigGenerator:
         print(f"Generating minimal config for {len(servers)} proxies...")
         
         proxies = []
-        names = []
+        
+        display_map = {
+            'AM': 'Americas',
+            'EU': 'Europe',
+            'AS': 'Singapore'  # 按照要求，将 AS 映射为 Singapore
+        }
+        
+        counts = {k: 1 for k in display_map.keys()}
         
         for s in servers:
-            short_host = s['host'].split('.')[0]
-            base_name = f"Opera-{s['region']}-{short_host[-2:]}"
+            region = s['region']
             
-            name = base_name
-            idx = 1
-            while name in names:
-                name = f"{base_name}-{idx}"
-                idx += 1
-            names.append(name)
+            prefix = display_map.get(region, region)
+            
+            current_count = counts.get(region, 1)
+            
+            name = f"{prefix}-{current_count:02d}"
+            
+            counts[region] = current_count + 1
             
             proxies.append({
                 'name': name,
@@ -120,7 +122,6 @@ class ProxyConfigGenerator:
                 'skip-cert-verify': True,
                 'sni': s['host']
             })
-
 
         config = {'proxies': proxies}
         
