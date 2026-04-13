@@ -14,11 +14,9 @@ class ProxyConfigGenerator:
     def __init__(self):
 
         self.output_filename = 'clash-config.yml'
-        
-        self.version = "v1.11.2"
-        self.arch = "linux-amd64" 
+         
         self.binary_name = "opera-proxy"
-        self.base_url = f"https://github.com/Snawoot/opera-proxy/releases/download/{self.version}/opera-proxy.{self.arch}"
+        self.base_url = f"https://github.com/dinger114/opera-proxy/releases/download/master/opera-proxy.linux-amd64"
         
         self.region_map = {'AM': 'Americas', 'AS': 'Asia', 'EU': 'Europe'}
 
