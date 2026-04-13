@@ -92,7 +92,7 @@ class ProxyConfigGenerator:
         
         display_map = {
             'AM': 'Americas',
-            'EU': 'Europe',
+            'EU': 'Finland',
             'AS': 'Singapore'  # 按照要求，将 AS 映射为 Singapore
         }
         
