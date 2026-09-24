@@ -6,6 +6,7 @@ import re
 import sys
 import stat
 import urllib.request
+import json
 import yaml 
 
 from typing import List, Dict, Tuple
@@ -16,15 +17,29 @@ class ProxyConfigGenerator:
         self.output_filename = 'clash-config.yml'
          
         self.binary_name = "opera-proxy"
-        self.base_url = f"https://github.com/dinger114/opera-proxy/releases/download/master/opera-proxy.linux-amd64"
-        
+        self.repo = "dinger114/opera-proxy"
+        self.asset_name = "opera-proxy.linux-amd64"
+
         self.region_map = {'AM': 'Americas', 'AS': 'Asia', 'EU': 'Europe'}
+
+    def _latest_release_tag(self) -> str:
+        api_url = f"https://api.github.com/repos/{self.repo}/releases/latest"
+        with urllib.request.urlopen(api_url, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        tag = data.get("tag_name")
+        if not tag:
+            raise RuntimeError(f"No tag_name in release response: {data}")
+        return tag
 
     def download_tool(self):
         print(f"::group::Download Tool")
         try:
-            print(f"Downloading {self.binary_name}...")
-            urllib.request.urlretrieve(self.base_url, self.binary_name)
+            print(f"Resolving latest release for {self.repo}...")
+            tag = self._latest_release_tag()
+            base_url = f"https://github.com/{self.repo}/releases/download/{tag}/{self.asset_name}"
+            print(f"Latest tag: {tag}")
+            print(f"Downloading {self.binary_name} from {base_url}...")
+            urllib.request.urlretrieve(base_url, self.binary_name)
             st = os.stat(self.binary_name)
             os.chmod(self.binary_name, st.st_mode | stat.S_IEXEC)
             print("Done.")
